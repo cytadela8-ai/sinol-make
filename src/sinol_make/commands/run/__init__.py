@@ -17,7 +17,7 @@ from sinol_make import contest_types, util, sio2jail
 from sinol_make.structs.run_structs import ExecutionData, PrintData
 from sinol_make.structs.cache_structs import CacheTest, CacheFile
 from sinol_make.interfaces.BaseCommand import BaseCommand
-from sinol_make.interfaces.Errors import CompilationError, UnknownContestType
+from sinol_make.interfaces.Errors import CompilationError
 from sinol_make.helpers import compile, compiler, package_util, printer, paths, cache, parsers
 from sinol_make.structs.status_structs import Status, ResultChange, PointsChange, ValidationResult, ExecutionResult, \
     TotalPointsChange
@@ -434,8 +434,12 @@ class Command(BaseCommand):
         result_file = file_no_ext + ".res"
         hard_time_limit = math.ceil(2 * time_limit / 1000.0)
 
-        return self.task_type.run(time_limit, hard_time_limit, memory_limit, test, output_file,
-                                  package_util.get_out_from_in(test), result_file, executable, execution_dir)
+        try:
+            return self.task_type.run(time_limit, hard_time_limit, memory_limit, test, output_file,
+                                      package_util.get_out_from_in(test), result_file, executable, execution_dir)
+        except SystemExit as e:
+            # mp.Pool loses the task of a worker that exits, so the parent would wait for its result forever.
+            raise RuntimeError(f"Running {name} on {os.path.basename(test)} failed.") from e
 
     def run_solutions(self, compiled_commands, names, solutions, executables_dir):
         """
@@ -517,6 +521,9 @@ class Command(BaseCommand):
         except KeyboardInterrupt:
             keyboard_interrupt = True
             pool.terminate()
+        except RuntimeError as e:
+            pool.terminate()
+            util.exit_with_error(str(e))
         finally:
             if has_terminal:
                 run_event.clear()
@@ -1008,10 +1015,7 @@ class Command(BaseCommand):
         package_util.validate_test_names(self.ID)
         self.args = args
         self.config = package_util.get_config()
-        try:
-            self.contest = contest_types.get_contest_type()
-        except UnknownContestType as e:
-            util.exit_with_error(str(e))
+        self.contest = contest_types.get_contest_type()
 
         if not 'title' in self.config.keys():
             util.exit_with_error('Title was not defined in config.yml.')
